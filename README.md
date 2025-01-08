@@ -15,6 +15,7 @@ I have a [Mackie DL32R](https://mackie.com/intl/products/mixers/dl-series) mixer
 ## Future ideas
 
 - Playback control (select song, start/stop playback).
+- Tap tempo control
 - Full MIDI implementation and MIDI hardware jack, allowing for a mixer control surface to be connected via MIDI cable.
 - LED indicators to show mute state etc.
 - Configuration via inputs such as encoders and buttons and an LCD screen or similar.

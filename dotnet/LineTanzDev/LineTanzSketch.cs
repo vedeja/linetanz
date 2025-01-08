@@ -11,11 +11,11 @@ public partial class LineTanzSketch
     private Initializer initializer = new();
     private DateTime lastKeepAliveSent;
     private List<DlMessage> incomingMessages = [];
+    private bool isMuted;
 
     public void Setup()
     {
-        initializer.RegisterSender(Send);
-        initializer.RegisterSeqNoGenerator(GetNextSeqNo);
+        initializer.RegisterRequestSender(SendRequest);
         socket.Connect(host, port);
         seqNo = 0;
     }
@@ -33,7 +33,7 @@ public partial class LineTanzSketch
         Thread.Sleep(100);
     }
 
-    private int GetNextSeqNo() => ++seqNo;
+    private byte GetNextSeqNo() => ++seqNo;
 
     private void KeepAlive()
     {
@@ -41,7 +41,7 @@ public partial class LineTanzSketch
         if (now - lastKeepAliveSent > TimeSpan.FromMilliseconds(3000))
         {
             lastKeepAliveSent = now;
-            Send(new DlMessage(MessageType.Request, Command.KeepAlive, GetNextSeqNo(), []));
+            SendRequest(Command.KeepAlive, []);
         }
     }
 
@@ -49,54 +49,95 @@ public partial class LineTanzSketch
     {
         HandleIncomingRequests();
         HandleIncomingResponses();
-
-        incomingMessages.Clear();
+        HandleIncomingBroadcasts();
+        // TODO: handle error messages?
     }
 
     private void HandleIncomingRequests()
     {
-        foreach (var incomingRequest in incomingMessages.Where(x => x.Type == MessageType.Request))
+        var sequenceNumbers = incomingMessages.Where(x => x.Type == MessageType.Request).Select(x => x.SequenceNumber).ToList();
+        foreach (var seqNo in sequenceNumbers)
         {
-            if (incomingRequest.Type == MessageType.Request)
+            var incomingRequest = incomingMessages.First(x => x.SequenceNumber == seqNo);
+
+            switch (incomingRequest.Command)
             {
-                switch (incomingRequest.Command)
-                {
-                    case Command.Handshake:
-                        {
-                            var body = new byte[] { 0x10, 0x40, 0, 0, 0, 0, 0, 0 };
-                            Send(new DlMessage(MessageType.Response, Command.Handshake, incomingRequest.SequenceNumber, body));
-                            break;
-                        }
+                case Command.Handshake:
+                    {
+                        var body = new byte[] { 0x10, 0x40, 0, 0, 0, 0, 0, 0 };
+                        SendResponse(Command.Handshake, incomingRequest.SequenceNumber, body);
+                        break;
+                    }
 
-                    case Command.Info:
-                        {
-                            var body = new byte[] { 0, 0, 0, 0x02, 0, 0, 0x40, 0 };
-                            Send(new DlMessage(MessageType.Response, Command.Info, incomingRequest.SequenceNumber, body));
-                            break;
-                        }
+                case Command.Info:
+                    {
+                        var body = new byte[] { 0, 0, 0, 0x02, 0, 0, 0x40, 0 };
+                        SendResponse(Command.Info, incomingRequest.SequenceNumber, body);
+                        break;
+                    }
 
-                    case Command.MessageSizeControl:
-                        {
-                            var body = incomingRequest.Body[0..4];
-                            Send(new DlMessage(MessageType.Response, Command.MessageSizeControl, incomingRequest.SequenceNumber, body));
-                            break;
-                        }
+                case Command.MessageSizeControl:
+                    {
+                        var body = incomingRequest.Body[0..4];
+                        SendResponse(Command.MessageSizeControl, incomingRequest.SequenceNumber, body);
+                        break;
+                    }
 
-                    default:
-                        throw new NotImplementedException($"Un-answered mixer request: {incomingRequest.Command}");
-                }
+                default:
+                    throw new NotImplementedException($"Un-answered mixer request: {incomingRequest.Command}");
             }
+            incomingMessages.Remove(incomingRequest);
         }
     }
 
     private void HandleIncomingResponses()
     {
-        foreach (var incomingResponse in incomingMessages.Where(x => x.Type == MessageType.Response))
+        var sequenceNumbers = incomingMessages.Where(x => x.Type == MessageType.Response).Select(x => x.SequenceNumber).ToList();
+        foreach (var seqNo in sequenceNumbers)
         {
-            initializer.HandleIncomingResponse(incomingResponse);
+            var incomingResponse = incomingMessages.First(x => x.SequenceNumber == seqNo);
+            var isHandled = initializer.HandleIncomingResponse(incomingResponse);
+
+            if (isHandled)
+            {
+                incomingMessages.Remove(incomingResponse);
+            }
         }
     }
-   
+
+    private void HandleIncomingBroadcasts()
+    {
+        var sequenceNumbers = incomingMessages.Where(x => x.Type == MessageType.Broadcast).Select(x => x.SequenceNumber).ToList();
+        foreach (var seqNo in sequenceNumbers)
+        {
+            var incomingBroadcast = incomingMessages.First(x => x.SequenceNumber == seqNo);
+
+            //TODO: Handle broadcast message
+        }
+    }
+
+    private byte Send(MessageType type, Command command, byte[] body)
+    {
+        var seqNo = GetNextSeqNo();
+        Send(new DlMessage(type, command, seqNo, body));
+        return seqNo;
+    }
+
+    private byte SendRequest(Command command, byte[] body)
+    {
+        return Send(MessageType.Request, command, body);
+    }
+
+    private void SendResponse(Command command, byte seqNo, byte[] body)
+    {
+        Send(MessageType.Response, command, seqNo, body);
+    }
+
+    private void Send(MessageType type, Command command, byte seqNo, byte[] body)
+    {
+        Send(new DlMessage(type, command, seqNo, body));
+    }
+
     private void Send(DlMessage message)
     {
         var data = Serializer.Serialize(message);
@@ -155,5 +196,23 @@ public partial class LineTanzSketch
             incomingMessages.Add(dlmsg);
             Console.WriteLine($"IN  -> {dlmsg}");
         }
+    }
+
+    public void ToggleMute()
+    {
+        isMuted = !isMuted;
+        Console.WriteLine($"Mute: {isMuted}");
+        
+        var state = (byte)(isMuted ? 0x01 : 0x00);
+        var body = new byte[] { 0x00, 0x00, 0x13, 0x00, 0x00, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00, state };
+        
+
+        // 13 67 is the channel number for FX1 input
+        body[3] = 0x67;
+        SendRequest(Command.ChannelValues, body);
+
+        // 13 C9 is the channel number for FX2 input
+        body[3] = 0xC9;
+        SendRequest(Command.ChannelValues, body);
     }
 }

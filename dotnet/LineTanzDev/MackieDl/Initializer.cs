@@ -3,9 +3,9 @@ public class Initializer
 {
     private bool isInitialized;
     private int initializationStatus;
-    private Action<DlMessage>? send;
-    private Func<int>? seqNoGenerator;
-    private List<DlMessage> outgoingInitMessages = [];
+    private Func<Command, byte[], byte>? sendRequestAndGetSeqNo;
+    
+    private Dictionary<byte, Command> outgoingInitMessages = [];
 
     public bool Initialize()
     {
@@ -17,22 +17,16 @@ public class Initializer
         return isInitialized;
     }
 
-    public void RegisterSender(Action<DlMessage> send)
+    public void RegisterRequestSender(Func<Command, byte[], byte> sendRequestAndGetSeqNo)
     {
-        this.send = send;
+        this.sendRequestAndGetSeqNo = sendRequestAndGetSeqNo;
     }
 
-    internal void RegisterSeqNoGenerator(Func<int> seqNoGenerator)
-    {
-        this.seqNoGenerator = seqNoGenerator;
-    }
-
-    public void HandleIncomingResponse(DlMessage incomingResponse)
+    public bool HandleIncomingResponse(DlMessage incomingResponse)
     {
         if (!isInitialized)
         {
-            var request = outgoingInitMessages.SingleOrDefault(x => x.SequenceNumber == incomingResponse.SequenceNumber && x.Command == incomingResponse.Command);
-            if (request != null)
+            if(outgoingInitMessages.TryGetValue(incomingResponse.SequenceNumber, out var request) && request == incomingResponse.Command)
             {
                 switch (initializationStatus)
                 {
@@ -55,9 +49,11 @@ public class Initializer
                     default:
                         break;
                 }
-                outgoingInitMessages.Remove(request);
+                outgoingInitMessages.Remove(incomingResponse.SequenceNumber);
+                return true;
             }
         }
+        return false;
     }
 
 
@@ -65,23 +61,23 @@ public class Initializer
     {
         switch (initializationStatus)
         {
-            case 0:
-                Send(new DlMessage(MessageType.Request, Command.KeepAlive, seqNoGenerator(), []));
+            case 0:                
+                SendRequest(Command.KeepAlive, []);
                 initializationStatus = 1;
                 break;
 
-            case 2:
-                Send(new DlMessage(MessageType.Request, Command.MessageSizeControl, seqNoGenerator(), [0, 0, 0, 0, 0, 0, 0, 0]));
+            case 2:                
+                SendRequest(Command.MessageSizeControl, [0, 0, 0, 0, 0, 0, 0, 0]);
                 initializationStatus = 3;
                 break;
 
-            case 4:
-                Send(new DlMessage(MessageType.Request, Command.Handshake, seqNoGenerator(), []));
+            case 4:                
+                SendRequest(Command.Handshake, []);
                 initializationStatus = 5;
                 break;
 
-            case 6:
-                Send(new DlMessage(MessageType.Request, Command.Info, seqNoGenerator(), [0, 0, 0, 0x02]));
+            case 6:                
+                SendRequest(Command.Info, [0, 0, 0, 0x02]);
                 initializationStatus = 7;
                 break;
 
@@ -97,9 +93,9 @@ public class Initializer
         // TODO: Command.PeriodicMeters?
     }
 
-    private void Send(DlMessage message)
+    private void SendRequest(Command command, byte[] body)      
     {
-        outgoingInitMessages.Add(message);
-        send(message);
+        var seqNo = sendRequestAndGetSeqNo(command, body);
+        outgoingInitMessages.Add(seqNo, command);
     }
 }

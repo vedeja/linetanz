@@ -7,12 +7,12 @@ public class DlMessage
     /// </summary>
     public const byte MESSAGE_START = 0xAB;
 
-    public int SequenceNumber { get; set; }
+    public byte SequenceNumber { get; set; }
     public MessageType Type { get; set; }
     public Command Command { get; set; }
     public byte[] Body { get; set; }
 
-    public DlMessage(MessageType messageType, Command command, int sequenceNumber, byte[] body)
+    public DlMessage(MessageType messageType, Command command, byte sequenceNumber, byte[] body)
     {
         Type = messageType;
         Command = command;
