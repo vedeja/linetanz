@@ -9,8 +9,8 @@ public partial class LineTanzSketch
     private byte seqNo;
 
     private Initializer initializer = new();
+    private Inbox inbox = new();
     private DateTime lastKeepAliveSent;
-    private List<DlMessage> incomingMessages = [];
     private bool isMuted;
 
     public void Setup()
@@ -45,6 +45,19 @@ public partial class LineTanzSketch
         }
     }
 
+    private void Receive()
+    {
+        if (socket.Available > 0)
+        {
+            var buffer = new byte[socket.Available];
+            var bytesRead = socket.Receive(buffer, SocketFlags.None);
+            if (bytesRead > 0)
+            {
+                inbox.Receive(buffer[0..bytesRead]);
+            }
+        }
+    } 
+
     private void HandleIncomingMessages()
     {
         HandleIncomingRequests();
@@ -55,10 +68,9 @@ public partial class LineTanzSketch
 
     private void HandleIncomingRequests()
     {
-        var sequenceNumbers = incomingMessages.Where(x => x.Type == MessageType.Request).Select(x => x.SequenceNumber).ToList();
-        foreach (var seqNo in sequenceNumbers)
+        foreach (var seqNo in inbox.RequestSequenceNumbers)
         {
-            var incomingRequest = incomingMessages.First(x => x.SequenceNumber == seqNo);
+            var incomingRequest = inbox.Get(seqNo);
 
             switch (incomingRequest.Command)
             {
@@ -86,31 +98,29 @@ public partial class LineTanzSketch
                 default:
                     throw new NotImplementedException($"Un-answered mixer request: {incomingRequest.Command}");
             }
-            incomingMessages.Remove(incomingRequest);
+            inbox.Remove(incomingRequest);
         }
     }
 
     private void HandleIncomingResponses()
     {
-        var sequenceNumbers = incomingMessages.Where(x => x.Type == MessageType.Response).Select(x => x.SequenceNumber).ToList();
-        foreach (var seqNo in sequenceNumbers)
+        foreach (var seqNo in inbox.ResponseSequenceNumbers)
         {
-            var incomingResponse = incomingMessages.First(x => x.SequenceNumber == seqNo);
+            var incomingResponse = inbox.Get(seqNo);
             var isHandled = initializer.HandleIncomingResponse(incomingResponse);
 
             if (isHandled)
             {
-                incomingMessages.Remove(incomingResponse);
+                inbox.Remove(incomingResponse);
             }
         }
     }
 
     private void HandleIncomingBroadcasts()
     {
-        var sequenceNumbers = incomingMessages.Where(x => x.Type == MessageType.Broadcast).Select(x => x.SequenceNumber).ToList();
-        foreach (var seqNo in sequenceNumbers)
+        foreach (var seqNo in inbox.BroadcastSequenceNumbers)
         {
-            var incomingBroadcast = incomingMessages.First(x => x.SequenceNumber == seqNo);
+            var incomingBroadcast = inbox.Get(seqNo);
 
             //TODO: Handle broadcast message
         }
@@ -143,59 +153,6 @@ public partial class LineTanzSketch
         var data = Serializer.Serialize(message);
         Console.WriteLine($"OUT <- {message}");
         socket.Send(data);
-    }
-
-    private void Receive()
-    {
-        if (socket.Available > 0)
-        {
-            var buffer = new byte[socket.Available];
-            var bytesRead = socket.Receive(buffer, SocketFlags.None);
-            if (bytesRead > 0)
-            {
-                ProcessData(buffer[0..bytesRead]);
-            }
-        }
-    }
-
-    private void ProcessData(ReadOnlyMemory<byte> data)
-    {
-        //Console.WriteLine($"Received {data.Length} bytes");
-
-        var dataArray = data.ToArray();
-        var messageStartIndexes = new List<int>();
-
-        var currentIndex = -1;
-
-        while (true)
-        {
-            var nextStart = Array.IndexOf(dataArray, DlMessage.MESSAGE_START, ++currentIndex);
-
-            if (nextStart == -1)
-            {
-                // START Not found (probably because we processed the only or last message)
-                break;
-            }
-
-            messageStartIndexes.Add(nextStart);
-            currentIndex = nextStart;
-        }
-
-        //Console.WriteLine($"Received {messageStartIndexes.Count} messages");
-
-        // Handle each individual message
-        for (int i = 0; i < messageStartIndexes.Count; i++)
-        {
-            int startIndex = messageStartIndexes[i];
-            var isLastItem = i == messageStartIndexes.Count - 1;
-
-            var endIndex = isLastItem ? dataArray.Length - 1 : messageStartIndexes[i + 1];
-            var messageData = dataArray[startIndex..(endIndex + 1)];
-
-            var dlmsg = DlMessage.FromData(messageData);
-            incomingMessages.Add(dlmsg);
-            Console.WriteLine($"IN  -> {dlmsg}");
-        }
     }
 
     public void ToggleMute()

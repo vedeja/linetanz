@@ -16,7 +16,7 @@ while (true)
             case ConsoleKey.Escape:
                 return;
 
-            case ConsoleKey.M:
+            case ConsoleKey.Spacebar:
                 linetanz.ToggleMute();                
                 break;
         }
