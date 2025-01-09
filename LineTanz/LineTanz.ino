@@ -1,59 +1,99 @@
 #include "Inbox.h"
+#include "messageType.h"
+#include "commandType.h"
+#include "dlMessage.h"
 
-const int buttonPin = 2;  // the number of the pushbutton pin
-const int ledPin = 13;    // the number of the LED pin
+const int footswitchPin = 2;
+const int ledPin = 13;
+int muteState = HIGH;
+int footswitchState;
+int lastFootswitchState = LOW;
+unsigned long lastDebounceTime = 0;
+unsigned long debounceDelay = 50;
+int keepAliveInterval = 2000;  // 2 seconds between sending keep-alive to the mixer
+uint8_t seqNo;
+const char EMPTY[0];
 
-// Variables will change:
-int ledState = HIGH;        // the current state of the output pin
-int buttonState;            // the current reading from the input pin
-int lastButtonState = LOW;  // the previous reading from the input pin
-
-// the following variables are unsigned longs because the time, measured in
-// milliseconds, will quickly become a bigger number than can be stored in an int.
-unsigned long lastDebounceTime = 0;  // the last time the output pin was toggled
-unsigned long debounceDelay = 50;    // the debounce time; increase if the output flickers
-
+unsigned long lastKeepAliveSent;
 Inbox *inbox;
 
 void setup() {
   Serial.begin(9600);
   Serial.println("LineTanz");
 
-  pinMode(buttonPin, INPUT);
+  pinMode(footswitchPin, INPUT);
   pinMode(ledPin, OUTPUT);
 
   // set initial LED state
-  digitalWrite(ledPin, ledState);
+  digitalWrite(ledPin, muteState);
+
+  seqNo = 0;
 }
 
 void loop() {
-  HandleButton();
+  handleFootswitch();
 
   // if (initializer.Initialize())
   //       {
-  //           KeepAlive();
+  keepAlive();
   //       }
 
-  Receive();
+  receive();
   //       HandleIncomingMessages();
 
   //       // Execute logic
   //       // Handle outgoing messages
-
-  //       Thread.Sleep(100);
-  
 }
 
-void HandleButton() {
+uint8_t getNextSeqNo() {
+  return ++seqNo;
+}
+
+char sendRequest(commandType command, char body[]) {
+  return send(msgTypeRequest, command, body);
+}
+
+char send(messageType type, commandType command, char body[]) {
+  uint8_t sequenceNumber = getNextSeqNo();
+  dlMessage message;
+
+  message.type = type;
+  message.command = command;
+  message.sequenceNumber = sequenceNumber;
+  message.body = body;
+
+  send(message);
+  return seqNo;
+}
+
+void send(dlMessage &message) {
+  //var data = Serializer.Serialize(message);
+
+  Serial.print("OUT <<< ");
+  SerialPrintMessage(message);
+
+  //socket.Send(data);
+}
+
+void SerialPrintMessage(dlMessage &message) {
+  Serial.print(getMessageTypeName(message.type));  
+  Serial.print(" (");
+  Serial.print(message.sequenceNumber);
+  Serial.print(") ");
+  Serial.print(getCommandTypeName(message.command));
+  Serial.println("");
+}
+
+void handleFootswitch() {
   // read the state of the switch into a local variable:
-  int reading = digitalRead(buttonPin);
+  int reading = digitalRead(footswitchPin);
 
   // check to see if you just pressed the button
   // (i.e. the input went from LOW to HIGH), and you've waited long enough
   // since the last press to ignore any noise:
 
   // If the switch changed, due to noise or pressing:
-  if (reading != lastButtonState) {
+  if (reading != lastFootswitchState) {
     // reset the debouncing timer
     lastDebounceTime = millis();
   }
@@ -63,12 +103,12 @@ void HandleButton() {
     // delay, so take it as the actual current state:
 
     // if the button state has changed:
-    if (reading != buttonState) {
-      buttonState = reading;
+    if (reading != footswitchState) {
+      footswitchState = reading;
 
       // only toggle the LED if the new button state is HIGH
-      if (buttonState == HIGH) {
-        ledState = !ledState;
+      if (footswitchState == HIGH) {
+        muteState = !muteState;
 
         SerialPrintState();
       }
@@ -76,13 +116,23 @@ void HandleButton() {
   }
 
   // set the LED:
-  digitalWrite(ledPin, ledState);
+  digitalWrite(ledPin, muteState);
 
   // save the reading. Next time through the loop, it'll be the lastButtonState:
-  lastButtonState = reading;
+  lastFootswitchState = reading;
 }
 
-void Receive() {
+void keepAlive() {
+  unsigned long now = millis();
+
+  // Send every x milliseconds
+  if (now - lastKeepAliveSent > keepAliveInterval) {
+    lastKeepAliveSent = now;
+    sendRequest(cmdTypeKeepAlive, EMPTY);
+  }
+}
+
+void receive() {
   // TODO: use TCP instead of serial
 
   // check for incoming serial data:

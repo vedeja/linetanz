@@ -1,4 +1,4 @@
 void SerialPrintState() {
   Serial.print("State: ");
-  Serial.println(ledState);
+  Serial.println(muteState);
 }
