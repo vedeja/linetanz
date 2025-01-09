@@ -30,6 +30,9 @@ public partial class LineTanzSketch
         Receive();
         HandleIncomingMessages();
 
+        // Execute logic
+        // Handle outgoing messages
+
         Thread.Sleep(100);
     }
 
