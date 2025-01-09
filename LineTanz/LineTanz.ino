@@ -2,6 +2,11 @@
 #include "messageType.h"
 #include "commandType.h"
 #include "dlMessage.h"
+#include "secrets.h"
+
+#include <WiFiS3.h>
+
+WiFiClient tcpClient;
 
 const int footswitchPin = 2;
 const int ledPin = 13;
@@ -15,7 +20,7 @@ uint8_t seqNo;
 uint8_t EMPTY[0] = {};
 
 unsigned long lastKeepAliveSent;
-Inbox *inbox;
+Inbox* inbox;
 
 void setup() {
   Serial.begin(9600);
@@ -26,6 +31,33 @@ void setup() {
 
   // set initial LED state
   digitalWrite(ledPin, muteState);
+
+  // check for the WiFi module:
+  if (WiFi.status() == WL_NO_MODULE) {
+    Serial.println("Communication with WiFi module failed!");
+    // don't continue
+    while (true)
+      ;
+  }
+
+  Serial.print("Attempting to connect to SSID: ");
+  Serial.println(WIFI_SSID);
+  // attempt to connect to WiFi network:
+  while (WiFi.begin(WIFI_SSID, WIFI_PASSWORD) != WL_CONNECTED) {
+    delay(10000);  // wait 10 seconds for connection:
+  }
+
+  Serial.print("Connected to WiFi ");
+  Serial.println(WIFI_SSID);
+
+  // connect to TCP server
+  if (tcpClient.connect(TCP_SERVER_ADDR, TCP_SERVER_PORT)) {
+    Serial.println("Connected to TCP server");
+    tcpClient.write("Hello!");  // send to TCP Server
+    tcpClient.flush();
+  } else {
+    Serial.println("Failed to connect to TCP server");
+  }
 
   seqNo = 0;
 }
@@ -54,7 +86,7 @@ uint8_t getNextSeqNo() {
   return n;
 }
 
-void SerialPrintMessage(dlMessage &message) {
+void SerialPrintMessage(dlMessage& message) {
   Serial.print(getMessageTypeName(message.type));
   Serial.print(" (");
   Serial.print(message.sequenceNumber);
@@ -144,7 +176,7 @@ char send(messageType type, commandType command, uint8_t body[]) {
   return seqNo;
 }
 
-void send(dlMessage &message) {
+void send(dlMessage& message) {
   //var data = Serializer.Serialize(message);
 
   Serial.print("OUT <<< ");
