@@ -12,7 +12,7 @@ unsigned long lastDebounceTime = 0;
 unsigned long debounceDelay = 50;
 int keepAliveInterval = 2000;  // 2 seconds between sending keep-alive to the mixer
 uint8_t seqNo;
-const char EMPTY[0];
+uint8_t EMPTY[0] = {};
 
 unsigned long lastKeepAliveSent;
 Inbox *inbox;
@@ -46,37 +46,16 @@ void loop() {
 }
 
 uint8_t getNextSeqNo() {
-  return ++seqNo;
-}
+  uint8_t n = ++seqNo;
+  if (n == 0) {
+    n = 1;
+  }
 
-char sendRequest(commandType command, char body[]) {
-  return send(msgTypeRequest, command, body);
-}
-
-char send(messageType type, commandType command, char body[]) {
-  uint8_t sequenceNumber = getNextSeqNo();
-  dlMessage message;
-
-  message.type = type;
-  message.command = command;
-  message.sequenceNumber = sequenceNumber;
-  message.body = body;
-
-  send(message);
-  return seqNo;
-}
-
-void send(dlMessage &message) {
-  //var data = Serializer.Serialize(message);
-
-  Serial.print("OUT <<< ");
-  SerialPrintMessage(message);
-
-  //socket.Send(data);
+  return n;
 }
 
 void SerialPrintMessage(dlMessage &message) {
-  Serial.print(getMessageTypeName(message.type));  
+  Serial.print(getMessageTypeName(message.type));
   Serial.print(" (");
   Serial.print(message.sequenceNumber);
   Serial.print(") ");
@@ -151,4 +130,25 @@ void receive() {
       inbox->receive(buffer);
     }
   }
+}
+
+char sendRequest(commandType command, uint8_t body[]) {
+  return send(msgTypeRequest, command, body);
+}
+
+char send(messageType type, commandType command, uint8_t body[]) {
+  uint8_t sequenceNumber = getNextSeqNo();
+  dlMessage message(type, command, sequenceNumber, body);
+
+  send(message);
+  return seqNo;
+}
+
+void send(dlMessage &message) {
+  //var data = Serializer.Serialize(message);
+
+  Serial.print("OUT <<< ");
+  SerialPrintMessage(message);
+
+  //socket.Send(data);
 }
