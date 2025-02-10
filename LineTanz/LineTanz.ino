@@ -5,6 +5,7 @@
 #include "secrets.h"
 #include <WiFiS3.h>
 #include "Arduino_LED_Matrix.h"
+#include <ArduinoLog.h>
 
 WiFiClient tcpClient;
 Inbox* inbox;
@@ -18,7 +19,7 @@ uint16_t tcpPort = SECRET_TCP_SERVER_PORT;
 
 int status = WL_IDLE_STATUS;  // the WiFi radio's status
 const int footswitchPin = 2;
-const int ledPin = 13;
+const int ledPin = 12;
 int muteState = HIGH;
 int footswitchState;
 int lastFootswitchState = LOW;
@@ -45,7 +46,8 @@ SequencedCommand* outgoingInitMessages[8];
 
 void setup() {
   Serial.begin(9600);
-  Serial.println("LineTanz");
+  Log.begin(LOG_LEVEL_VERBOSE, &Serial);
+  Log.noticeln("LineTanz");
 
   matrix.begin();
 
@@ -70,6 +72,8 @@ void setup() {
   for (int i = 0; i < 8; i++) {
     outgoingInitMessages[i] = nullptr;  // Initialize the array with nullptr
   }
+
+  Log.noticeln("Setup complete");
 }
 
 void loop() {
@@ -97,7 +101,7 @@ void loop() {
 void setupWifi() {
   // check for the WiFi module:
   if (WiFi.status() == WL_NO_MODULE) {
-    Serial.println("Communication with WiFi module failed!");
+    Log.noticeln("Communication with WiFi module failed!");
     // don't continue
     while (true)
       ;
@@ -105,13 +109,12 @@ void setupWifi() {
 
   String fv = WiFi.firmwareVersion();
   if (fv < WIFI_FIRMWARE_LATEST_VERSION) {
-    Serial.println("Please upgrade the firmware");
+    Log.noticeln("Please upgrade the firmware");
   }
 
   // attempt to connect to WiFi network:
   while (status != WL_CONNECTED) {
-    Serial.print("Attempting to connect to SSID: ");
-    Serial.println(ssid);
+    Log.noticeln("Attempting to connect to SSID: %s", ssid);
     // Connect to WPA/WPA2 network:
     status = WiFi.begin(ssid, pass);
 
@@ -119,23 +122,20 @@ void setupWifi() {
     delay(10000);
   }
 
-  Serial.println("Connected to the network");
+  Log.noticeln("Connected to the network");
   printCurrentNet();
   printWifiData();
 }
 
 bool setupTcp() {
-  Serial.print("Attempting to connect to mixer: ");
-  Serial.print(tcpServer);
-  Serial.print(" on port ");
-  Serial.println(tcpPort);
+  Log.noticeln("Attempting to connect to mixer: %s on port %d", tcpServer, tcpPort);
 
   if (tcpClient.connect(tcpServer, tcpPort)) {
-    Serial.println("Connected to mixer");
+    Log.noticeln("Connected to mixer");
     tcpClient.flush();
     return true;
   } else {
-    Serial.println("Failed to connect to mixer");
+    Log.noticeln("Failed to connect to mixer");
     return false;
   }
 }
@@ -173,9 +173,8 @@ bool initialize() {
     } else if (initializationStatus == 8) {
       increaseInitStatus();
       isInitialized = true;
-      Serial.println("Init done");
-
-    } 
+      Log.noticeln("Init done");
+    }
   }
 
   return isInitialized;
@@ -183,9 +182,6 @@ bool initialize() {
 
 void increaseInitStatus() {
   initializationStatus++;
-
-  Serial.print("Updated init status to: ");
-  Serial.print(initializationStatus);
 
   char* description;
 
@@ -219,9 +215,7 @@ void increaseInitStatus() {
       break;
   }
 
-  Serial.print(" (");
-  Serial.print(description);
-  Serial.println(")");
+  Log.noticeln("Updated init status to: %d (%s)", initializationStatus, description);
 }
 
 void handleIncomingMessages() {
@@ -237,33 +231,26 @@ void handleIncomingMessages() {
 }
 
 bool handleInitializationResponse(dlMessage* response) {
-  Serial.println("handleInitializationResponse...");
+  Log.noticeln("handleInitializationResponse...");
 
   int previousInitStatus = initializationStatus - 1;
-  Serial.print("Looking at position ");
-  Serial.println(previousInitStatus);
 
   SequencedCommand* request = outgoingInitMessages[previousInitStatus];
 
   if (request == nullptr) {
-    Serial.println("Request was null");
+    Log.noticeln("Request was null");
     return false;
   }
 
   if (request->command != response->command) {
-    Serial.print("Request command was ");
-    Serial.print(request->command);
-    Serial.print(" but the response command was ");
-    Serial.println(response->command);
+    Log.notice("Request command was ");
+    Log.notice("%d", request->command);
+    Log.notice(" but the response command was ");
+    Log.notice("%d", response->command);
     return false;
   }
 
-  Serial.print("Matched response to request with seqno: ");
-  Serial.print(request->sequenceNumber);
-  Serial.print(" command: ");
-  Serial.println(request->command);
-
-  // TODO: Maybe reduntant:
+  // TODO: Maybe redundant:
   outgoingInitMessages[previousInitStatus] = nullptr;
 
   switch (initializationStatus) {
@@ -316,11 +303,11 @@ void handleFootswitch() {
       if (footswitchState == HIGH) {
         muteState = !muteState;
 
-        SerialPrintState();
+        Log.noticeln("State: %d", muteState);
 
         int size = 12;
 
-        uint8_t state = muteState ? 0x01 : 0x00;        
+        uint8_t state = muteState ? 0x01 : 0x00;
         uint8_t* body = new uint8_t[size]{ 0x00, 0x00, 0x13, 0x00, 0x00, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00, state };
 
         // 13 67 is the channel number for FX1 input
@@ -346,10 +333,10 @@ void reportStatus() {
   // Report every x milliseconds
   if (now - lastReportedStatus > 5000) {
     lastReportedStatus = now;
-    Serial.print("STATUS | Initialization status: ");
-    Serial.print(initializationStatus);
-    Serial.print(" | Inbox messages: ");
-    Serial.println(inbox->messageCount);
+    Log.notice("STATUS | Initialization status: ");
+    Log.notice("%d", initializationStatus);
+    Log.notice(" | Inbox messages: ");
+    Log.noticeln("%d", inbox->messageCount);
   }
 }
 
@@ -384,13 +371,6 @@ void sendInitRequest(commandType command, uint8_t body[], int size) {
   sc->sequenceNumber = seqNo;
   sc->command = command;
   outgoingInitMessages[initializationStatus] = sc;
-
-  Serial.print("Stored an init command, seqno: ");
-  Serial.print(sc->sequenceNumber);
-  Serial.print(" command: ");
-  Serial.print(sc->command);
-  Serial.print(" in position ");
-  Serial.println(initializationStatus);
 }
 
 char sendRequest(commandType command, uint8_t body[], int size) {
@@ -406,8 +386,7 @@ char send(messageType type, commandType command, uint8_t body[], int size) {
 }
 
 void send(dlMessage& message) {
-  Serial.print("OUT <<< ");
-  SerialPrintMessage(message);
+  Log.noticeln("OUT <<< %s (%d) %s", getMessageTypeName(message.type), message.sequenceNumber, getCommandTypeName(message.command));
 
   bool hasBody = message.size > 0;
   uint8_t bodyChunkCount1 = message.size / 4;
@@ -470,58 +449,29 @@ void send(dlMessage& message) {
 
   // Send the byte array
   if (tcpClient.write(data, len) == len) {
-    //Serial.println("Byte array sent successfully");
+    //Log.noticeln("Byte array sent successfully");
   } else {
-    Serial.println("Failed to send byte array");
+    Log.noticeln("Failed to send byte array");
   }
 }
 
 void printWifiData() {
   // print your board's IP address:
   IPAddress ip = WiFi.localIP();
-  Serial.print("IP Address: ");
+  Log.notice("IP Address: ");
 
-  Serial.println(ip);
-
-  // print MAC address:
-  uint8_t mac[6];
-  WiFi.macAddress(mac);
-  Serial.print("MAC address: ");
-  printMacAddress(mac);
+  Log.noticeln("%s", ip);  
 }
 
 void printCurrentNet() {
   // print the SSID of the network
-  Serial.print("SSID: ");
-  Serial.println(WiFi.SSID());
-
-  // print the MAC address of the router:
-  uint8_t bssid[6];
-  WiFi.BSSID(bssid);
-  Serial.print("BSSID: ");
-  printMacAddress(bssid);
+  Log.noticeln("SSID: %s", WiFi.SSID());
 
   // print the received signal strength:
   long rssi = WiFi.RSSI();
-  Serial.print("Signal strength (RSSI): ");
-  Serial.println(rssi);
+  Log.noticeln("Signal strength (RSSI): %d", rssi);
 
   // print the encryption type:
   uint8_t encryption = WiFi.encryptionType();
-  Serial.print("Encryption Type:");
-  Serial.println(encryption, HEX);
-  Serial.println();
-}
-
-void printMacAddress(uint8_t mac[]) {
-  for (int i = 0; i < 6; i++) {
-    if (i > 0) {
-      Serial.print(":");
-    }
-    if (mac[i] < 16) {
-      Serial.print("0");
-    }
-    Serial.print(mac[i], HEX);
-  }
-  Serial.println();
+  Log.noticeln("Encryption Type: %X", encryption);
 }

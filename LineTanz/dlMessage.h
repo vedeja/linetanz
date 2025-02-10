@@ -28,7 +28,7 @@ public:
 
     // TODO: validate header and body checksums, and handle invalid messages by throwing or returning some special error object
     // if (data[0] != MESSAGE_START) {
-    //   Serial.println("Message did not start with 0xAB");
+    //   SLog.notice("Message did not start with 0xAB"CR);
     //   return
     // }
 
