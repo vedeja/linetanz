@@ -2,15 +2,15 @@
 #define CMDTYPE_H
 
 enum commandType {
-  cmdTypeKeepAlive = 0x01,
-  cmdTypeHandshake = 0x03,
-  cmfFirmwareInfo = 0x04,
-  cmdTypeMessageSizeControl = 0x06,
-  cmdTypeInfo = 0x0E,
-  cmdTypeChannelValues = 0x13,
-  cmdTypeMeterLayout = 0x15, // aka Broadcast control
-  cmdTypeMeterControl = 0x16,
-  cmdTypeChannelNames = 0x18,
+  cmdTypeKeepAlive = 0x01, // Used as the very first request message, and sent every 2.5 seconds by the client to keep the connection alive.
+  cmdTypeHandshake = 0x03, //Sent once from each side early on, to establish basic client and mixer information.
+  cmfFirmwareInfo = 0x04, //Sent once from client to mixer, this requests detailed version information.
+  cmdTypeMessageSizeControl = 0x06, //Indicates the size of message the requester is willing to receive.
+  cmdTypeInfo = 0x0E, //Requests various kinds of general information from the peer.
+  cmdTypeChannelValues = 0x13, //Used to both report channel information (e.g. fader position, muting etc), or indicate a change to that information (e.g. "please mute this channel"). Also used to report meter information.
+  cmdTypeMeterLayout = 0x15, //Client request for the mixer to report meter information periodically
+  cmdTypeMeterControl = 0x16, //Client request indicating which meter values should be reported
+  cmdTypeChannelNames = 0x18, //sed to report channel names.
 };
 
 const char* getCommandTypeName(commandType command) {
