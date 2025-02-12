@@ -1,4 +1,5 @@
 #include "Inbox.h"
+#include "Initializer.h"
 #include "messageType.h"
 #include "commandType.h"
 #include "dlMessage.h"
@@ -8,6 +9,7 @@
 #include <ArduinoLog.h>
 
 WiFiClient tcpClient;
+Initializer* initializer;
 Inbox* inbox;
 ArduinoLEDMatrix matrix;
 
@@ -31,19 +33,7 @@ uint8_t seqNo;
 uint8_t* EMPTY = new uint8_t[0];
 unsigned long lastKeepAliveSent;
 bool isConnected;
-bool isInitialized;
-int initializationStatus;
 unsigned long lastReportedStatus;
-
-
-class SequencedCommand {
-public:
-  uint8_t sequenceNumber;
-  commandType command;
-};
-
-SequencedCommand* outgoingInitMessages[8];
-
 
 void setup() {
   Serial.begin(9600);
@@ -70,12 +60,7 @@ void setup() {
 
   seqNo = 0;
   inbox = new Inbox();
-  initializationStatus = 0;
-  isInitialized = false;
-
-  for (int i = 0; i < 8; i++) {
-    outgoingInitMessages[i] = nullptr;  // Initialize the array with nullptr
-  }
+  initializer = new Initializer(sendRequest);
 
   Log.noticeln("Setup complete");
 }
@@ -89,7 +74,7 @@ void loop() {
   //TODO: try interrupts instead
   handleFootswitch();
 
-  if (initialize()) {
+  if (initializer->ensureInitialized()) {
     keepAlive();
   }
 
@@ -153,132 +138,13 @@ uint8_t getNextSeqNo() {
   return n;
 }
 
-bool initialize() {
-  if (!isInitialized) {
-
-    if (initializationStatus == 0) {
-      sendInitRequest(cmdTypeKeepAlive, EMPTY, 0);
-      increaseInitStatus();
-
-    } else if (initializationStatus == 2) {
-      uint8_t* body = new uint8_t[8]{ 0, 0, 0, 0, 0, 0, 0, 0 };
-      sendInitRequest(cmdTypeMessageSizeControl, body, 8);
-      increaseInitStatus();
-
-    } else if (initializationStatus == 4) {
-      sendInitRequest(cmdTypeHandshake, EMPTY, 0);
-      increaseInitStatus();
-
-    } else if (initializationStatus == 6) {
-      uint8_t* body = new uint8_t[4]{ 0, 0, 0, 0x02 };
-      sendInitRequest(cmdTypeInfo, body, 4);
-      increaseInitStatus();
-
-    } else if (initializationStatus == 8) {
-      increaseInitStatus();
-      isInitialized = true;
-      Log.noticeln("Init done");
-    }
-  }
-
-  return isInitialized;
-}
-
-void increaseInitStatus() {
-  initializationStatus++;
-
-  char* description;
-
-  switch (initializationStatus) {
-    case 1:
-      description = "Awaiting KeepAlive response";
-      break;
-    case 2:
-      description = "KeepAlive response received";
-      break;
-    case 3:
-      description = "Awaiting MessageSizeControl response";
-      break;
-    case 4:
-      description = "MessageSizeControl response received";
-      break;
-    case 5:
-      description = "Awaiting Handshake response";
-      break;
-    case 6:
-      description = "Handshake response received";
-      break;
-    case 7:
-      description = "Awaiting Info response";
-      break;
-    case 8:
-      description = "Info response received";
-      break;
-    case 9:
-      description = "Initialized";
-      break;
-  }
-
-  Log.noticeln("Updated init status to: %d (%s)", initializationStatus, description);
-}
-
 void handleIncomingMessages() {
   for (int i = 0; i < inbox->messageCount; i++) {
     dlMessage* m = inbox->messages[i];
 
-    if (!isInitialized && m->type == msgTypeResponse) {
-      bool isHandled = handleInitializationResponse(m);
-    }
-
+    initializer->handleIncomingMessage(m);
     inbox->remove(m->index);
   }
-}
-
-bool handleInitializationResponse(dlMessage* response) {
-  Log.noticeln("handleInitializationResponse...");
-
-  int previousInitStatus = initializationStatus - 1;
-
-  SequencedCommand* request = outgoingInitMessages[previousInitStatus];
-
-  if (request == nullptr) {
-    Log.noticeln("Request was null");
-    return false;
-  }
-
-  if (request->command != response->command) {
-    Log.notice("Request command was ");
-    Log.notice("%d", request->command);
-    Log.notice(" but the response command was ");
-    Log.notice("%d", response->command);
-    return false;
-  }
-
-  // TODO: Maybe redundant:
-  outgoingInitMessages[previousInitStatus] = nullptr;
-
-  switch (initializationStatus) {
-    case 1:
-      increaseInitStatus();
-      break;
-
-    case 3:
-      increaseInitStatus();
-      break;
-
-    case 5:
-      increaseInitStatus();
-      break;
-
-    case 7:
-      increaseInitStatus();
-      break;
-
-    default:
-      break;
-  }
-
-  return true;
 }
 
 void handleFootswitch() {
@@ -337,7 +203,7 @@ void reportStatus() {
   // Report every x milliseconds
   if (now - lastReportedStatus > 5000) {
     lastReportedStatus = now;
-    Log.noticeln("STATUS | Initialization status: %d | Free SRAM: %d bytes | Inbox messages: %d", initializationStatus, freeRam(), inbox->messageCount);
+    Log.noticeln("STATUS | Initialization status: %d | Free SRAM: %d bytes | Inbox messages: %d", initializer->initializationStatus, freeRam(), inbox->messageCount);
   }
 }
 
@@ -379,15 +245,6 @@ void receive() {
     // Free the allocated memory
     delete[] buffer;
   }
-}
-
-void sendInitRequest(commandType command, uint8_t body[], int size) {
-  char seqNo = sendRequest(command, body, size);
-
-  SequencedCommand* sc = new SequencedCommand;
-  sc->sequenceNumber = seqNo;
-  sc->command = command;
-  outgoingInitMessages[initializationStatus] = sc;
 }
 
 char sendRequest(commandType command, uint8_t body[], int size) {
