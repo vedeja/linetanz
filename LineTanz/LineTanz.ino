@@ -1,25 +1,20 @@
+#include "Network.h"
 #include "Inbox.h"
 #include "Initializer.h"
+#include "MixerClient.h"
 #include "messageType.h"
 #include "commandType.h"
 #include "dlMessage.h"
 #include "secrets.h"
-#include <WiFiS3.h>
 #include "Arduino_LED_Matrix.h"
 #include <ArduinoLog.h>
 
-WiFiClient tcpClient;
+Network* network;
 Initializer* initializer;
 Inbox* inbox;
+MixerClient* client;
 ArduinoLEDMatrix matrix;
 
-// Define values in the file secrets.h
-char ssid[] = SECRET_SSID;
-char pass[] = SECRET_PASS;
-char tcpServer[] = SECRET_TCP_SERVER_ADDR;
-uint16_t tcpPort = SECRET_TCP_SERVER_PORT;
-
-int status = WL_IDLE_STATUS;  // the WiFi radio's status
 const int footswitchPin = 2;
 const int keepAliveLedPin = 11;
 const int muteLedPin = 12;
@@ -29,10 +24,8 @@ int lastFootswitchState = LOW;
 unsigned long lastDebounceTime = 0;
 unsigned long debounceDelay = 50;
 int keepAliveInterval = 2000;  // 2 seconds between sending keep-alive to the mixer
-uint8_t seqNo;
 uint8_t* EMPTY = new uint8_t[0];
 unsigned long lastKeepAliveSent;
-bool isConnected;
 unsigned long lastReportedStatus;
 
 void setup() {
@@ -47,8 +40,11 @@ void setup() {
   matrix.begin();
   matrix.play(true);
 
-  setupWifi();
-  isConnected = setupTcp();
+  network = new Network();
+  client = new MixerClient();
+  
+  network->setupWifi();  
+  client->setupTcp();
   matrix.loadFrame(LEDMATRIX_HEART_BIG);
 
   pinMode(footswitchPin, INPUT);
@@ -58,15 +54,14 @@ void setup() {
   digitalWrite(keepAliveLedPin, 0);
   digitalWrite(muteLedPin, muteState);
 
-  seqNo = 0;
   inbox = new Inbox();
-  initializer = new Initializer(sendRequest);
+  initializer = new Initializer(client);
 
   Log.noticeln("Setup complete");
 }
 
 void loop() {
-  if (!isConnected) {
+  if (!client->isConnected) {
     matrix.loadFrame(LEDMATRIX_DANGER);
     return;
   }
@@ -78,64 +73,13 @@ void loop() {
     keepAlive();
   }
 
-  receive();
+  client->receive(inbox);
   handleIncomingMessages();
 
   // Execute logic
   // Handle outgoing messages
 
   reportStatus();
-}
-
-void setupWifi() {
-  // check for the WiFi module:
-  if (WiFi.status() == WL_NO_MODULE) {
-    Log.noticeln("Communication with WiFi module failed!");
-    // don't continue
-    while (true)
-      ;
-  }
-
-  String fv = WiFi.firmwareVersion();
-  if (fv < WIFI_FIRMWARE_LATEST_VERSION) {
-    Log.noticeln("Please upgrade the firmware");
-  }
-
-  // attempt to connect to WiFi network:
-  while (status != WL_CONNECTED) {
-    Log.noticeln("Attempting to connect to SSID: %s", ssid);
-    // Connect to WPA/WPA2 network:
-    status = WiFi.begin(ssid, pass);
-
-    // wait 10 seconds for connection:
-    delay(10000);
-  }
-
-  Log.noticeln("Connected to the network");
-  printCurrentNet();
-  printWifiData();
-}
-
-bool setupTcp() {
-  Log.noticeln("Attempting to connect to mixer: %s on port %d", tcpServer, tcpPort);
-
-  if (tcpClient.connect(tcpServer, tcpPort)) {
-    Log.noticeln("Connected to mixer");
-    tcpClient.flush();
-    return true;
-  } else {
-    Log.noticeln("Failed to connect to mixer");
-    return false;
-  }
-}
-
-uint8_t getNextSeqNo() {
-  uint8_t n = ++seqNo;
-  if (n == 0) {
-    n = 1;
-  }
-
-  return n;
 }
 
 void handleIncomingMessages() {
@@ -182,11 +126,11 @@ void handleFootswitch() {
 
         // 13 67 is the channel number for FX1 input
         body[3] = 0x67;
-        sendRequest(cmdTypeChannelValues, body, size);
+        client->sendRequest(cmdTypeChannelValues, body, size);
 
         // 13 C9 is the channel number for FX2 input
         body[3] = 0xC9;
-        sendRequest(cmdTypeChannelValues, body, size);
+        client->sendRequest(cmdTypeChannelValues, body, size);
       }
     }
   }
@@ -219,7 +163,7 @@ void keepAlive() {
   // Send every x milliseconds
   if (now - lastKeepAliveSent > keepAliveInterval) {
     lastKeepAliveSent = now;
-    sendRequest(cmdTypeKeepAlive, EMPTY, 0);
+    client->sendRequest(cmdTypeKeepAlive, EMPTY, 0);
     
     // Turn on keep alive LED
     digitalWrite(keepAliveLedPin, 1);
@@ -229,123 +173,4 @@ void keepAlive() {
     digitalWrite(keepAliveLedPin, 0);
   }
 
-}
-
-void receive() {
-    size_t size = tcpClient.available();
-
-  if (size > 0) {
-    uint8_t* buffer = new uint8_t[size];
-    int bytesRead = tcpClient.read(buffer, size);
-
-    if (bytesRead > 0) {      
-      inbox->receive(buffer, size);
-    }
-
-    // Free the allocated memory
-    delete[] buffer;
-  }
-}
-
-char sendRequest(commandType command, uint8_t body[], int size) {
-  return send(msgTypeRequest, command, body, size);
-}
-
-char send(messageType type, commandType command, uint8_t body[], int size) {
-  uint8_t sequenceNumber = getNextSeqNo();
-  dlMessage message(type, command, sequenceNumber, body, size);
-
-  send(message);
-  return seqNo;
-}
-
-void send(dlMessage& message) {
-  Log.noticeln("OUT <<< %s (%d) %s", getMessageTypeName(message.type), message.sequenceNumber, getCommandTypeName(message.command));
-
-  bool hasBody = message.size > 0;
-  uint8_t bodyChunkCount1 = message.size / 4;
-  uint8_t bodyChunkCount2 = 0;  //TODO: handle such large bodies, larger than 255 chunks? Yes, probably - song playback messages appear to have 364 bytes of data in the body
-  uint16_t headerChecksum = 0xFFFF - (0xAB + message.sequenceNumber + bodyChunkCount2 + bodyChunkCount1 + message.type + message.command);
-  uint8_t hc1 = (headerChecksum >> 8) & 0xFF;
-  uint8_t hc2 = headerChecksum & 0xFF;
-
-  // Assume no body
-  int len = 8;
-
-  if (hasBody) {
-    len += message.size;
-    len += 4;  // space for body checksum
-  }
-
-  uint8_t data[len] = {
-    0xAB,
-    message.sequenceNumber,
-    bodyChunkCount2,
-    bodyChunkCount1,
-    message.type,
-    message.command,
-    hc1,
-    hc2
-  };
-
-  // data[0] = 0xAB;
-  // data[1] = message.sequenceNumber;
-  // data[2] = bodyChunkCount2;
-  // data[3] = bodyChunkCount1;
-  // data[4] = message.type;
-  // data[5] = message.command;
-  // data[6] = hc1;
-  // data[7] = hc2;
-
-  if (hasBody) {
-    uint32_t bodyChecksum = 0xFFFFFFFF;
-
-    for (int i = 0; i < message.size; i++) {
-      uint8_t b = message.body[i];
-      data[8 + i] = b;
-
-      // Calculate checksum
-      bodyChecksum -= b;
-    }
-
-    uint8_t bc0 = (bodyChecksum >> 24) & 0xFF;
-    uint8_t bc1 = (bodyChecksum >> 16) & 0xFF;
-    uint8_t bc2 = (bodyChecksum >> 8) & 0xFF;
-    uint8_t bc3 = bodyChecksum & 0xFF;
-
-    int bcOffset = 8 + message.size;
-
-    data[bcOffset + 0] = bc0;
-    data[bcOffset + 1] = bc1;
-    data[bcOffset + 2] = bc2;
-    data[bcOffset + 3] = bc3;
-  }
-
-  // Send the byte array
-  if (tcpClient.write(data, len) == len) {
-    //Log.noticeln("Byte array sent successfully");
-  } else {
-    Log.noticeln("Failed to send byte array");
-  }
-}
-
-void printWifiData() {
-  // print your board's IP address:
-  IPAddress ip = WiFi.localIP();
-  Log.notice("IP Address: ");
-
-  Log.noticeln("%s", ip);  
-}
-
-void printCurrentNet() {
-  // print the SSID of the network
-  Log.noticeln("SSID: %s", WiFi.SSID());
-
-  // print the received signal strength:
-  long rssi = WiFi.RSSI();
-  Log.noticeln("Signal strength (RSSI): %d", rssi);
-
-  // print the encryption type:
-  uint8_t encryption = WiFi.encryptionType();
-  Log.noticeln("Encryption Type: %X", encryption);
 }

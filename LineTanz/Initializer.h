@@ -1,4 +1,5 @@
 #include <ArduinoLog.h>
+#include "MixerClient.h" 
 
 class Initializer {
 
@@ -11,8 +12,8 @@ class Initializer {
 public:
   int initializationStatus;
 
-  Initializer(char (*sendRequestFunc)(commandType, uint8_t[], int)) {
-    sendRequest = sendRequestFunc;
+  Initializer(MixerClient* client) {
+    this->client = client;
     initializationStatus = 0;
     isInitialized = false;
 
@@ -56,10 +57,10 @@ public:
   }
 
 private:
+  MixerClient* client;
   uint8_t *EMPTY = new uint8_t[0];
   bool isInitialized;
   SequencedCommand *outgoingInitMessages[8];
-  char (*sendRequest)(commandType, uint8_t[], int);
 
   void increaseInitStatus() {
     initializationStatus++;
@@ -144,7 +145,7 @@ private:
   }
 
   void sendInitRequest(commandType command, uint8_t body[], int size) {
-    char seqNo = sendRequest(command, body, size);
+    char seqNo = client->sendRequest(command, body, size);
 
     SequencedCommand *sc = new SequencedCommand;
     sc->sequenceNumber = seqNo;
