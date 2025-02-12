@@ -14,7 +14,7 @@ public:
 
   Inbox() {
     messageCount = 0;
-
+    
     for (int i = 0; i < 16; i++) {
       messages[i] = nullptr;  // Initialize the array with nullptr
     }
@@ -46,6 +46,7 @@ public:
       messageCount++;
     } else {
       Log.noticeln("Message list is full!");
+      delete message; // Ensure to free the memory if the message list is full
       return;
     }
   }

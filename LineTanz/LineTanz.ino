@@ -19,7 +19,8 @@ uint16_t tcpPort = SECRET_TCP_SERVER_PORT;
 
 int status = WL_IDLE_STATUS;  // the WiFi radio's status
 const int footswitchPin = 2;
-const int ledPin = 12;
+const int keepAliveLedPin = 11;
+const int muteLedPin = 12;
 int muteState = HIGH;
 int footswitchState;
 int lastFootswitchState = LOW;
@@ -47,6 +48,7 @@ SequencedCommand* outgoingInitMessages[8];
 void setup() {
   Serial.begin(9600);
   Log.begin(LOG_LEVEL_VERBOSE, &Serial);
+  //Log.begin(LOG_LEVEL_SILENT, &Serial);
   Log.noticeln("LineTanz");
 
   matrix.begin();
@@ -60,9 +62,11 @@ void setup() {
   matrix.loadFrame(LEDMATRIX_HEART_BIG);
 
   pinMode(footswitchPin, INPUT);
-  pinMode(ledPin, OUTPUT);
+  pinMode(keepAliveLedPin, OUTPUT);
+  pinMode(muteLedPin, OUTPUT);
   // set initial LED state
-  digitalWrite(ledPin, muteState);
+  digitalWrite(keepAliveLedPin, 0);
+  digitalWrite(muteLedPin, muteState);
 
   seqNo = 0;
   inbox = new Inbox();
@@ -322,7 +326,7 @@ void handleFootswitch() {
   }
 
   // set the LED:
-  digitalWrite(ledPin, muteState);
+  digitalWrite(muteLedPin, muteState);
 
   // save the reading. Next time through the loop, it'll be the lastButtonState:
   lastFootswitchState = reading;
@@ -333,11 +337,15 @@ void reportStatus() {
   // Report every x milliseconds
   if (now - lastReportedStatus > 5000) {
     lastReportedStatus = now;
-    Log.notice("STATUS | Initialization status: ");
-    Log.notice("%d", initializationStatus);
-    Log.notice(" | Inbox messages: ");
-    Log.noticeln("%d", inbox->messageCount);
+    Log.noticeln("STATUS | Initialization status: %d | Free SRAM: %d bytes | Inbox messages: %d", initializationStatus, freeRam(), inbox->messageCount);
   }
+}
+
+extern "C" char* sbrk(int incr);
+
+int freeRam() {
+  char top;
+  return &top - reinterpret_cast<char*>(sbrk(0));
 }
 
 void keepAlive() {
@@ -346,16 +354,25 @@ void keepAlive() {
   if (now - lastKeepAliveSent > keepAliveInterval) {
     lastKeepAliveSent = now;
     sendRequest(cmdTypeKeepAlive, EMPTY, 0);
+    
+    // Turn on keep alive LED
+    digitalWrite(keepAliveLedPin, 1);
   }
+  else if (now - lastKeepAliveSent > 100) {
+    // Turn off keep alive LED
+    digitalWrite(keepAliveLedPin, 0);
+  }
+
 }
 
 void receive() {
-  if (tcpClient.available()) {
     size_t size = tcpClient.available();
+
+  if (size > 0) {
     uint8_t* buffer = new uint8_t[size];
     int bytesRead = tcpClient.read(buffer, size);
 
-    if (bytesRead > 0) {
+    if (bytesRead > 0) {      
       inbox->receive(buffer, size);
     }
 
