@@ -38,6 +38,7 @@ public:
     size_t size = tcpClient.available();
 
     if (size > 0) {
+      Log.noticeln("Received %d bytes", size);
       uint8_t* buffer = new uint8_t[size];
       int bytesRead = tcpClient.read(buffer, size);
 
@@ -48,6 +49,10 @@ public:
       // Free the allocated memory
       delete[] buffer;
     }
+  }
+
+  char sendResponse(commandType command, uint8_t body[], uint8_t sequenceNumber, int size) {
+    return send(msgTypeResponse, command, body, sequenceNumber, size);
   }
 
   char sendRequest(commandType command, uint8_t body[], int size) {
@@ -70,6 +75,11 @@ private:
 
   char send(messageType type, commandType command, uint8_t body[], int size) {
     uint8_t sequenceNumber = getNextSeqNo();
+    send(type, command, body, sequenceNumber, size);
+    return seqNo;
+  }
+
+  char send(messageType type, commandType command, uint8_t body[], uint8_t sequenceNumber, int size) {
     dlMessage message(type, command, sequenceNumber, body, size);
 
     send(message);
@@ -77,11 +87,12 @@ private:
   }
 
   void send(dlMessage& message) {
-    Log.noticeln("OUT <<< %s (%d) %s", getMessageTypeName(message.type), message.sequenceNumber, getCommandTypeName(message.command));
+    //Log.traceln("OUT <<< %s (%d) %s", getMessageTypeName(message.type), message.sequenceNumber, getCommandTypeName(message.command));
+    Log.noticeln("Send   %s", message.toString());
 
     bool hasBody = message.size > 0;
     uint8_t bodyChunkCount1 = message.size / 4;
-    uint8_t bodyChunkCount2 = 0;  //TODO: handle such large bodies, larger than 255 chunks? Yes, probably - song playback messages appear to have 364 bytes of data in the body
+    uint8_t bodyChunkCount2 = 0;  //TODO: handle such large bodies, larger than 255 chunks? Yes, probably - song playback messages appear to have 108 bytes of data in the body
     uint16_t headerChecksum = 0xFFFF - (START + message.sequenceNumber + bodyChunkCount2 + bodyChunkCount1 + message.type + message.command);
     uint8_t hc1 = (headerChecksum >> 8) & 0xFF;
     uint8_t hc2 = headerChecksum & 0xFF;

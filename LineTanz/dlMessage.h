@@ -4,6 +4,14 @@
 #include "messageType.h"
 #include "commandType.h"
 
+struct msg {
+  messageType t;
+  commandType c;
+  uint8_t b[108];
+  uint8_t q;
+  uint8_t s;
+};
+
 
 class dlMessage {
 
@@ -14,7 +22,7 @@ public:
   dlMessage(messageType t, commandType c, uint8_t sequenceNumber, uint8_t b[], uint8_t size)
     : type(t), command(c), sequenceNumber(sequenceNumber), size(size) {
     body = new uint8_t[size];
-    memcpy(body, b, size);    
+    memcpy(body, b, size);
     delete[] b;
   }
 
@@ -33,7 +41,7 @@ public:
 
     // TODO: validate header and body checksums, and handle invalid messages by throwing or returning some special error object
     // if (data[0] != MESSAGE_START) {
-    //   SLog.notice("Message did not start with 0xAB"CR);
+    //   Log.noticeln("Message did not start with 0xAB"CR);
     //   return
     // }
 
@@ -54,6 +62,38 @@ public:
     }
 
     return new dlMessage(type, command, seqno, body, bodyLength);
+  }
+
+  const char* toString(bool includeBody = false) {
+    char paddedSequenceNumber[4];
+    sprintf(paddedSequenceNumber, "%03d", sequenceNumber);
+    String t = String(getMessageTypeName(type));
+    //t.toUpperCase();
+
+    //String s = "[" + t + " " + paddedSequenceNumber + " - " + String(getCommandTypeName(command));
+    String s = "[" + String(paddedSequenceNumber) + "_" + String(getCommandTypeName(command)) + "-" + t;
+
+    if (includeBody && size > 0) {
+      String bodyHex = "";
+      for (size_t i = 0; i < size; i++) {
+        char hexBuffer[3];  // Two characters for hex value and one for the null terminator
+
+        // Print each byte in hexadecimal format with leading zeros
+        sprintf(hexBuffer, "%02X", body[i]);
+        bodyHex += hexBuffer;
+
+        // Add a space between each byte
+        if (i < size - 1) {
+          bodyHex += " ";
+        }
+      }
+      s += " with " + String(size) + " bytes: { " + bodyHex + " }";
+    }
+    else {      
+    }
+
+    s += "]";
+    return s.c_str();
   }
 };
 

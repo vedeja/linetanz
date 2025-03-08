@@ -1,15 +1,11 @@
 #include <ArduinoLog.h>
 #include "MixerClient.h" 
+#include "SequencedCommand.h"
 
 class Initializer {
 
-  class SequencedCommand {
-  public:
-    uint8_t sequenceNumber;
-    commandType command;
-  };
-
 public:
+  bool isInitialized;
   int initializationStatus;
 
   Initializer(MixerClient* client) {
@@ -17,7 +13,7 @@ public:
     initializationStatus = 0;
     isInitialized = false;
 
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 12; i++) {
       outgoingInitMessages[i] = nullptr;  // Initialize the array with nullptr
     }
   }
@@ -25,6 +21,8 @@ public:
 
   bool ensureInitialized() {
     if (!isInitialized) {
+
+      //TODO add missing steps cmdTypeMeterLayout and cmdTypeMeterControl
 
       if (initializationStatus == 0) {
         sendInitRequest(cmdTypeKeepAlive, EMPTY, 0);
@@ -40,11 +38,25 @@ public:
         uint8_t *body = new uint8_t[4]{ 0, 0, 0, 0x02 };
         sendInitRequest(cmdTypeInfo, body, 4);
         increaseInitStatus();
+      // } else if (initializationStatus == 8) {
+      //   uint8_t *body = new uint8_t[8]{ 0, 0, 0, 1, 0, 0, 1, 0x1F };
+      //   sendInitRequest(cmdTypeMeterLayout, body, 8);
+      //   increaseInitStatus();
+      // } else if (initializationStatus == 10) {
+      //   uint8_t *body = new uint8_t[12]{ 0, 0, 0, 1, 0x10, 0, 1, 0, 0, 0x5A, 0, 1};
+      //   sendInitRequest(cmdTypeMeterControl, body, 12);
+      //   increaseInitStatus();       
+      // } else if (initializationStatus == 12) {
+      //   increaseInitStatus();
+      //   isInitialized = true;
+      //   Log.noticeln("Init done");
+      // }
       } else if (initializationStatus == 8) {
         increaseInitStatus();
         isInitialized = true;
         Log.noticeln("Init done");
       }
+      
     }
 
     return isInitialized;
@@ -59,7 +71,6 @@ public:
 private:
   MixerClient* client;
   uint8_t *EMPTY = new uint8_t[0];
-  bool isInitialized;
   SequencedCommand *outgoingInitMessages[8];
 
   void increaseInitStatus() {
@@ -92,6 +103,21 @@ private:
       case 8:
         description = "Info response received";
         break;
+      // case 9:
+      //   description = "Awaiting MeterLayout response";
+      //   break;
+      // case 10:
+      //   description = "MeterLayout response received";
+      //   break;
+      // case 11:
+      //   description = "Awaiting MeterControl response";
+      //   break;
+      // case 12:
+      //   description = "MeterControl response received";
+      //   break;
+      // case 13:
+      //   description = "Initialized";
+      //   break;
       case 9:
         description = "Initialized";
         break;
@@ -134,6 +160,14 @@ private:
         break;
 
       case 7:
+        increaseInitStatus();
+        break;
+
+      case 9:
+        increaseInitStatus();
+        break;
+
+      case 11:
         increaseInitStatus();
         break;
 

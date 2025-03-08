@@ -14,31 +14,16 @@ public:
 
   Inbox() {
     messageCount = 0;
-    
+  
     for (int i = 0; i < 16; i++) {
       messages[i] = nullptr;  // Initialize the array with nullptr
     }
-  }
+  }  
 
   void receive(uint8_t data[], size_t size) {
     dlMessage* message = dlMessage::fromData(data);
 
-    Log.noticeln("IN >>> %s (%d) %s", getMessageTypeName(message->type), message->sequenceNumber, getCommandTypeName(message->command));
-    // Log.notice(" { ");
-
-    // // Print the received bytes
-    // for (size_t i = 0; i < size; i++) {
-    //   // Buffer to hold the formatted string
-    //   char stringBuffer[3];  // 2 characters for hex value + 1 for null terminator
-
-    //   // Print each byte in hexadecimal format with leading zeros
-    //   sprintf(stringBuffer, "%02X", data[i]);
-
-    //   Log.notice(stringBuffer);
-    //   Log.notice(" ");
-    // }
-    // Log.notice(("}"CR);
-
+    Log.traceln("IN >>> %s (%d) %s", getMessageTypeName(message->type), message->sequenceNumber, getCommandTypeName(message->command));
     // Store message
     if (messageCount < 16) {
       message->index = messageCount;
