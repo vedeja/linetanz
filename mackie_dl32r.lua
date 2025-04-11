@@ -27,10 +27,11 @@ local f_commandtype = ProtoField.uint8("mackiedl32r.commandtype", "Command Type"
 })
 local f_checksum = ProtoField.uint16("mackiedl32r.checksum", "Checksum", base.HEX)
 local f_body = ProtoField.bytes("mackiedl32r.body", "Body")
+local f_body_byte = ProtoField.uint8("mackiedl32r.body_byte", "Body Byte", base.HEX)
 local f_bodychecksum = ProtoField.uint32("mackiedl32r.bodychecksum", "Body Checksum", base.HEX)
 
 -- Add fields to the protocol
-mackie_dl32r.fields = { f_magic, f_sequencenumber, f_bodylength, f_actualbodylength, f_messagetype, f_commandtype, f_checksum, f_body, f_bodychecksum }
+mackie_dl32r.fields = { f_magic, f_sequencenumber, f_bodylength, f_actualbodylength, f_messagetype, f_commandtype, f_checksum, f_body, f_body_byte, f_bodychecksum }
 
 -- Dissector function
 function mackie_dl32r.dissector(buffer, pinfo, tree)
@@ -88,8 +89,9 @@ function mackie_dl32r.dissector(buffer, pinfo, tree)
 
     -- Add the body to the tree if present
     if actual_body_length > 0 then
+        local body_subtree = tree:add(mackie_dl32r, buffer(8, actual_body_length + 4), "DL32R Message Body")
         local body = buffer(8, actual_body_length)
-        subtree:add(f_body, body)
+        body_subtree:add(f_body, body)
 
         -- Calculate the body checksum
         local body_sum = 0
@@ -102,13 +104,13 @@ function mackie_dl32r.dissector(buffer, pinfo, tree)
         local body_checksum_provided = buffer(8 + actual_body_length, 4):uint()
 
         -- Add the body checksum to the tree
-        subtree:add(f_bodychecksum, buffer(8 + actual_body_length, 4))
+        body_subtree:add(f_bodychecksum, buffer(8 + actual_body_length, 4))
 
         -- Validate body checksum
         if body_checksum_calc == body_checksum_provided then
-            subtree:add_expert_info(PI_CHECKSUM, PI_NOTE, "Body checksum valid")
+            body_subtree:add_expert_info(PI_CHECKSUM, PI_NOTE, "Body checksum valid")
         else
-            subtree:add_expert_info(PI_CHECKSUM, PI_WARN, string.format("Body checksum invalid (expected 0x%08X)", body_checksum_calc))
+            body_subtree:add_expert_info(PI_CHECKSUM, PI_WARN, string.format("Body checksum invalid (expected 0x%08X)", body_checksum_calc))
         end
     end
 end
