@@ -6,8 +6,10 @@
 #include "Network.h"
 #include "messageType.h"
 #include "commandType.h"
+#include "Arduino_LED_Matrix.h"
 
-#define BUTTON_PIN 2
+#define FOOTSWITCH1_PIN 2
+#define FOOTSWITCH2_PIN 3
 
 Network *network;
 WiFiClient tcpClient;
@@ -15,11 +17,13 @@ WiFiClient tcpClient;
 uint8_t START = 0xAB;
 uint8_t *EMPTY = new uint8_t[0];
 
-const int muteLedPin = 12;
+ArduinoLEDMatrix matrix;
 const int keepAliveLedPin = 13;
-volatile byte isrButtonState = LOW;
-byte buttonState = LOW;
-unsigned long lastSwitchPress = 0;
+volatile byte isrButtonState1 = LOW;
+byte buttonState1 = LOW;
+byte buttonState2 = LOW;
+unsigned long lastSwitchPress1 = 0;
+unsigned long lastSwitchPress2 = 0;
 const long wdtInterval = 2684;
 unsigned long wdtMillis = 0;
 
@@ -27,7 +31,9 @@ bool isTcpConnected;
 const char *tcpServer;
 bool isFx1Muted;
 bool isFx2Muted;
+bool isCh7Muted;
 bool muteChanged;
+//bool muteCh7Changed;
 bool muteChangedRemotely;
 unsigned long lastReportedStatus;
 unsigned long lastKeepAliveSent;
@@ -38,6 +44,17 @@ int tcpBufferSize = 0;
 
 std::queue<std::pair<byte *, int>> rawMessageQueue;
 std::map<uint8_t, std::pair<commandType, bool>> outgoingMessages;
+
+uint8_t frame[8][12] = {
+  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+};
 
 enum systemState
 {
@@ -67,13 +84,14 @@ void setup()
     tcpServer = SECRET_TCP_SERVER_ADDR;
 
     // hw setup
-    pinMode(muteLedPin, OUTPUT);
     pinMode(keepAliveLedPin, OUTPUT);
+    matrix.begin();
     // set initial LED state
-    digitalWrite(muteLedPin, false);
     digitalWrite(keepAliveLedPin, false);
-    pinMode(BUTTON_PIN, INPUT);
-    attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), handleSwitchPress, RISING);
+    pinMode(FOOTSWITCH1_PIN, INPUT);
+    pinMode(FOOTSWITCH2_PIN, INPUT);
+    attachInterrupt(digitalPinToInterrupt(FOOTSWITCH1_PIN), onSwitchPress1Interrupt, RISING);
+    attachInterrupt(digitalPinToInterrupt(FOOTSWITCH2_PIN), onSwitchPress2Interrupt, RISING);
 
     // join wifi
     network = new Network();
@@ -105,9 +123,10 @@ void loop()
     processIncomingMessage();
     initMixerConnection();
     keepAlive();
-    handleFootswitch();
+    handleFootswitches();
     updateMuteLed();
     sendFxMute();
+    sendCh7Mute();
     reportStatus();
 
     // Reset for next loop
@@ -118,17 +137,6 @@ void loop()
     WDT.refresh(); // Comment this line to stop refreshing the watchdog
     wdtMillis = millis();
   }
-}
-
-void handleSwitchPress() {
-    
-    // debounce
-    if (millis() - lastSwitchPress < 500) {
-        return;
-    }
-
-    buttonState = !buttonState;
-    lastSwitchPress = millis();
 }
 
 void sendFxMute()
@@ -150,15 +158,59 @@ void sendFxMute()
     }
 }
 
-void handleFootswitch()
+void sendCh7Mute()
 {
-    if (buttonState != isrButtonState)
+    if (muteChanged)
     {
-        buttonState = isrButtonState;
+        int size = 12;
+
+        // 0x03 0x48 is the channel number for CH7 input
+        uint8_t *body = new uint8_t[size]{0x00, 0x00, 0x03, 0x48, 0x00, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00, isCh7Muted ? 0x01 : 0x00};
+        send(getNextSeqNo(), msgTypeRequest, cmdTypeChannelValues, body, size, false);
+
+        delete[] body;
+    }
+}
+
+void onSwitchPress1Interrupt() {
+    
+    // debounce
+    if (millis() - lastSwitchPress1 < 500) {
+        return;
+    }
+
+    buttonState1 = !buttonState1;
+    lastSwitchPress1 = millis();
+}
+
+void onSwitchPress2Interrupt() {
+    
+    // debounce
+    if (millis() - lastSwitchPress2 < 500) {
+        return;
+    }
+
+    buttonState2 = !buttonState2;
+    lastSwitchPress2 = millis();
+
+    //matrix.loadSequence(LEDMATRIX_ANIMATION_BOUNCING_BALL);
+    //matrix.play(true);
+
+    // toggle CH7 mute state
+    //isCh7Muted = !isCh7Muted;
+    //muteCh7Changed = true;
+}
+
+void handleFootswitches()
+{
+    if (buttonState1 != isrButtonState1)
+    {
+        buttonState1 = isrButtonState1;
 
         muteChanged = true;
         isFx1Muted = !isFx1Muted;
         isFx2Muted = !isFx2Muted;
+        isCh7Muted = !isFx1Muted && !isFx2Muted;
     }
 }
 
@@ -167,8 +219,21 @@ void updateMuteLed()
     if (muteChanged || muteChangedRemotely)
     {
         // update the mute LED
-        Log.noticeln("Mute changed: %d %d", isFx1Muted, isFx2Muted);
-        digitalWrite(muteLedPin, isFx1Muted && isFx2Muted);
+        Log.noticeln("Mute changed: %d %d", isFx1Muted, isFx2Muted);        
+
+        if (isFx1Muted && isFx2Muted)
+        {
+            matrix.loadFrame(LEDMATRIX_HEART_BIG);
+            //matrix.loadSequence(LEDMATRIX_ANIMATION_AUDIO_WAVEFORM);
+            //matrix.play(true);
+        }
+        else
+        {
+            matrix.loadSequence(LEDMATRIX_ANIMATION_AUDIO_WAVEFORM);
+            matrix.play(true);
+            // Turn off the LED matrix
+            //matrix.renderBitmap(frame, 8, 12);
+        }    
     }
 }
 
